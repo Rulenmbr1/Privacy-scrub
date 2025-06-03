@@ -1,0 +1,164 @@
+name: Build Privacy Scrub APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+    
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '11'
+    
+    - name: Cache Gradle
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+        restore-keys: |
+          gradle-${{ runner.os }}-
+    
+    - name: Setup Android SDK Components
+      run: |
+        set -e
+        export ANDROID_HOME=$HOME/android-sdk
+        export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
+        
+        # Download command line tools
+        mkdir -p $ANDROID_HOME/cmdline-tools
+        cd $ANDROID_HOME/cmdline-tools
+        wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
+        unzip -q commandlinetools-linux-9477386_latest.zip
+        mv cmdline-tools latest
+        
+        # Accept licenses and install components
+        yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses
+        $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.2"
+        
+        echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+        echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
+        echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
+    
+    - name: Install Ionic and Capacitor
+      run: |
+        npm install -g @ionic/cli@7.1.1
+        npm install -g @capacitor/cli@5.7.0
+    
+    - name: Create Ionic project
+      run: |
+        ionic start privacy-scrub blank --type=vanilla --capacitor --no-deps --quiet
+        cd privacy-scrub
+        
+        # Replace the default index.html with Privacy Scrub content
+        cat > src/index.html << 'EOF'
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="utf-8" />
+          <title>Privacy Scrub</title>
+          <base href="/" />
+          <meta name="color-scheme" content="light dark" />
+          <meta name="viewport" content="viewport-fit=cover, width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+          <meta name="format-detection" content="telephone=no" />
+          <meta name="msapplication-tap-highlight" content="no" />
+          <link rel="icon" type="image/png" href="assets/icon/favicon.png" />
+          <link rel="apple-touch-icon" href="assets/icon/apple-touch-icon.png" />
+          <link rel="stylesheet" href="theme/variables.css" />
+          <style>
+            body {
+              margin: 0;
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+              min-height: 100vh;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              color: white;
+            }
+            .container {
+              text-align: center;
+              padding: 40px 20px;
+              background: rgba(255,255,255,0.1);
+              border-radius: 20px;
+              backdrop-filter: blur(10px);
+              max-width: 400px;
+              margin: 20px;
+            }
+            h1 {
+              font-size: 2.5em;
+              margin-bottom: 20px;
+              font-weight: 300;
+            }
+            .tagline {
+              font-size: 1.1em;
+              margin-bottom: 30px;
+              opacity: 0.9;
+            }
+            .features {
+              text-align: left;
+              margin-top: 20px;
+            }
+            .feature {
+              margin: 15px 0;
+              padding-left: 25px;
+              position: relative;
+            }
+            .feature:before {
+              content: "✓";
+              position: absolute;
+              left: 0;
+              color: #4ade80;
+              font-weight: bold;
+              font-size: 1.2em;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>Privacy Scrub</h1>
+            <p class="tagline">Your Personal Information Protection App</p>
+            <div class="features">
+              <div class="feature">Find your data across the web</div>
+              <div class="feature">Automated removal requests</div>
+              <div class="feature">Real-time privacy monitoring</div>
+              <div class="feature">Secure payment processing</div>
+            </div>
+          </div>
+        </body>
+        </html>
+        EOF
+    
+    - name: Build and add Android
+      run: |
+        cd privacy-scrub
+        ionic build
+        ionic capacitor add android
+        ionic capacitor copy android
+    
+    - name: Build APK
+      run: |
+        cd privacy-scrub/android
+        chmod +x gradlew
+        ./gradlew assembleDebug --no-daemon
+    
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: privacy-scrub-apk
+        path: privacy-scrub/android/app/build/outputs/apk/debug/app-debug.apk
